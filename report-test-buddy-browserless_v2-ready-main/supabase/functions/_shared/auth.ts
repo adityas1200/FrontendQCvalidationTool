@@ -1,0 +1,121 @@
+// Shared auth guard for internal agent edge functions.
+// Accepts either:
+//   - the project's SERVICE_ROLE key (used for internal function-to-function calls), or
+//   - a valid end-user JWT (any authenticated user).
+// Returns null on success, or a Response on failure.
+
+import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { corsHeaders } from "./cors.ts";
+
+function unauthorized(): Response {
+  return new Response(JSON.stringify({ error: "unauthorized" }), {
+    status: 401,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+}
+
+/** Decode JWT payload without verifying signature (structure check only). */
+function decodeJwtPayload(token: string): Record<string, unknown> | null {
+  try {
+    const parts = token.split(".");
+    if (parts.length < 2) return null;
+    const json = atob(parts[1].replace(/-/g, "+").replace(/_/g, "/"));
+    return JSON.parse(json);
+  } catch {
+    return null;
+  }
+}
+
+function looksLikeUserJwt(
+  claims: Record<string, unknown> | null,
+  opts: { allowExpiredMs?: number } = {},
+): boolean {
+  if (!claims) return false;
+  const sub = claims.sub;
+  if (typeof sub !== "string" || !sub) return false;
+  const role = claims.role;
+  if (role === "anon" || role === "service_role") return false;
+  const exp = claims.exp;
+  if (typeof exp === "number" && exp * 1000 < Date.now()) {
+    const grace = opts.allowExpiredMs ?? 0;
+    if (grace <= 0 || exp * 1000 < Date.now() - grace) return false;
+  }
+  return true;
+}
+
+/** Supabase client scoped to the caller's JWT (anon key). No service role required. */
+export function getSupabaseForRequest(req: Request): SupabaseClient {
+  const auth = req.headers.get("Authorization") || "";
+  const token = auth.replace(/^Bearer\s+/i, "").trim();
+  const serviceRole = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  if (serviceRole && token === serviceRole) {
+    return createClient(Deno.env.get("SUPABASE_URL")!, serviceRole);
+  }
+  // Never promote decoded (unverified) user claims to service-role access.
+  return createClient(
+    Deno.env.get("SUPABASE_URL")!,
+    Deno.env.get("SUPABASE_ANON_KEY")!,
+    { global: { headers: { Authorization: `Bearer ${token}` } } },
+  );
+}
+
+export async function requireAuth(req: Request): Promise<Response | null> {
+  const auth = req.headers.get("Authorization") || "";
+  const token = auth.replace(/^Bearer\s+/i, "").trim();
+  if (!token) return unauthorized();
+
+  // Allow internal service-role calls.
+  if (token === Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")) return null;
+
+  // Only the auth service can verify identity. Decoded claims and network
+  // failures never authorize a caller, including in development grace mode.
+  try {
+    const sb = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_ANON_KEY")!,
+      { global: { headers: { Authorization: `Bearer ${token}` } } },
+    );
+    const { data, error } = await sb.auth.getUser();
+    if (!error && data?.user) return null;
+  } catch { /* fail closed */ }
+  return unauthorized();
+}
+
+function isNetworkishAuthError(err: unknown): boolean {
+  const msg = String((err as { message?: string })?.message ?? err ?? "").toLowerCase();
+  return (
+    msg.includes("dns") ||
+    msg.includes("failed to lookup") ||
+    msg.includes("network") ||
+    msg.includes("connect") ||
+    msg.includes("fetch") ||
+    msg.includes("timed out") ||
+    msg.includes("timeout") ||
+    msg.includes("unknownissuer") ||
+    msg.includes("certificate") ||
+    msg.includes("error sending request") ||
+    msg.includes("tls") ||
+    msg.includes("ssl") ||
+    msg.includes("proxy") ||
+    msg.includes("retryable")
+  );
+}
+
+function devGraceEnabled(): boolean {
+  return Deno.env.get("AUTH_DEV_GRACE") === "true" && Deno.env.get("AUTH_STRICT") !== "true";
+}
+
+/** Server-access client for long-running background work, or null if the key is missing. */
+export function getServiceClient(): SupabaseClient | null {
+  const key = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  return key ? createClient(Deno.env.get("SUPABASE_URL")!, key) : null;
+}
+
+/** Caller-scoped client whose access token can be refreshed during a long run. */
+export function getSupabaseForAccessToken(accessToken: () => Promise<string>): SupabaseClient {
+  return createClient(
+    Deno.env.get("SUPABASE_URL")!,
+    Deno.env.get("SUPABASE_ANON_KEY")!,
+    { accessToken },
+  );
+}

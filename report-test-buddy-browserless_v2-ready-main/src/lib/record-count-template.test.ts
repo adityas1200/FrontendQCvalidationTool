@@ -1,0 +1,194 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { describe, expect, it } from "vitest";
+import { parseSubTabs } from "../../supabase/functions/_shared/mstr-grid-template";
+import { injectFilterCore } from "../../supabase/functions/_shared/mstr-filter-core";
+
+const root = process.cwd();
+const referencePath = resolve(
+  root,
+  "supabase/functions/_shared/references/browserless-record-count.js",
+);
+const orchestratorPath = resolve(
+  root,
+  "supabase/functions/agent-orchestrate/index.ts",
+);
+const scenarioDetailPath = resolve(root, "src/pages/ScenarioDetail.tsx");
+
+describe("record-count extraction contract", () => {
+  it("finds a quoted sub-tab in the scenario title when description is empty", () => {
+    expect(parseSubTabs({
+      title: "HCP Customer - 'Which is writing fewer NBRx than they used to?' tab Record Count: Pre Prod vs Prod",
+      description: "",
+    })).toEqual(["Which is writing fewer NBRx than they used to?"]);
+  });
+
+  it("does not wipe the record-count iframe core when refreshing filter core", () => {
+    const reference = readFileSync(referencePath, "utf8");
+    expect(reference).toContain("@@RTB_RECORD_COUNT_FRAME_CORE@@");
+    expect(reference).toContain("const tryFrame = frame");
+    const after = injectFilterCore(reference);
+    expect(after).toBe(reference);
+    expect(after).toContain("@@RTB_RECORD_COUNT_FRAME_CORE@@");
+    expect(after).toContain("resultFrame");
+  });
+
+  it("does not promote incidental scrape tables onto a scalar row-count KPI", () => {
+    const orchestrator = readFileSync(orchestratorPath, "utf8");
+    expect(orchestrator).toContain("skipIncidentalStructuredPromotion");
+    expect(orchestrator).toContain("configuredKpiOwnsScalar");
+    expect(orchestrator).toContain("isUsableScalarKpi");
+  });
+
+  it("versions the extractor without automatically replacing saved scripts", () => {
+    const reference = readFileSync(referencePath, "utf8");
+    const orchestrator = readFileSync(orchestratorPath, "utf8");
+
+    expect(reference).toContain("RECORD_COUNT_TEMPLATE_VERSION: 2026-10-27.3");
+    expect(orchestrator).toContain("if (!scriptHasSavedCode(script))");
+    expect(orchestrator).not.toContain("isStaleRecordCountScript");
+    expect(orchestrator).not.toContain("needsRecordCountTemplate");
+  });
+
+  it("does not persist readiness and debug objects as KPI values", () => {
+    const orchestrator = readFileSync(orchestratorPath, "utf8");
+
+    expect(orchestrator).toContain('"gridready", "debug", "showdata", "navigation", "filters"');
+    expect(orchestrator).toContain('a == null');
+    expect(orchestrator).toContain('{ error: "no_value" }');
+    expect(orchestrator).toContain('{ error: "no_expected_value" }');
+  });
+
+  it("recognizes common Show Data total formats", () => {
+    const reference = readFileSync(referencePath, "utf8");
+
+    expect(reference).toContain("Total\\s+Rows?");
+    expect(reference).toContain("Total\\s+Records?");
+    expect(reference).toContain("aria-rowcount");
+    expect(reference).toContain("Show Data popup did not become ready before timeout");
+  });
+
+  it("isolates and retries every filter combination without changing playwright-runtime", () => {
+    const orchestrator = readFileSync(orchestratorPath, "utf8");
+
+    expect(orchestrator).toContain("hasCombos ?");
+    expect(orchestrator).toContain("isolatedRunResponses");
+    expect(orchestrator).toContain("isolatedRefResponses");
+    expect(orchestrator).toContain("filter_combinations: [{ label: combo.label, filters: combo.filters || {} }]");
+    expect(orchestrator).toContain("mapPool(combos, 1");
+    expect(orchestrator).toContain("combo_extraction_retry");
+    expect(orchestrator).toContain("comboExtractionNeedsRetry");
+  });
+
+  it("preserves popup/profile text fields instead of forcing them through numeric parsing", () => {
+    const orchestrator = readFileSync(orchestratorPath, "utf8");
+
+    expect(orchestrator).toContain("function isNumericScalar");
+    expect(orchestrator).toContain("function preserveScalar");
+    expect(orchestrator).toContain('kind: "text"');
+    expect(orchestrator).toContain("normalizeTextScalar(aText) === normalizeTextScalar(eText)");
+  });
+
+  it("compares multiple structured KPI lists under their configured aliases", () => {
+    const orchestrator = readFileSync(orchestratorPath, "utf8");
+
+    expect(orchestrator).toContain("hasMultipleStructuredKpis");
+    expect(orchestrator).toContain("const rawE = lookupKpiValue(expectedMap, lbl)");
+    expect(orchestrator).toContain("diffMap[lbl] = {");
+    expect(orchestrator).toContain("structuredSourceKeys[lbl] = lbl");
+  });
+
+  it("resolves configured KPI aliases before declaring extracted values missing", () => {
+    const orchestrator = readFileSync(orchestratorPath, "utf8");
+
+    expect(orchestrator).toContain("function lookupConfiguredKpiValue");
+    expect(orchestrator).toContain("assertionSpec.kpi_aliases");
+    expect(orchestrator).toContain("lookupConfiguredKpiValue(refScraped, lbl, kpiAliases)");
+    expect(orchestrator).toContain("lookupConfiguredKpiValue(scraped, lbl, kpiAliases)");
+  });
+
+  it("does not retry PCC scalar payloads while preserving isolated sessions", () => {
+    const orchestrator = readFileSync(orchestratorPath, "utf8");
+
+    expect(orchestrator).not.toContain("function pccExtractionRetryReason");
+    expect(orchestrator).toContain("isPccScenario && !requireStructuredExtraction");
+    expect(orchestrator).toContain("comboExtractionNeedsRetry(response, comboLabel");
+    expect(orchestrator).toContain("invokeRuntimeWithRetry");
+  });
+
+  it("retries when a required grid/chart extract is missing", () => {
+    const orchestrator = readFileSync(orchestratorPath, "utf8");
+
+    expect(orchestrator).toContain("missingRequiredStructuredExtraction");
+    expect(orchestrator).toContain("function collectMatrixComboValues");
+    expect(orchestrator).not.toContain('{ k: "_multi", v: true }');
+    expect(orchestrator).toContain("isPccScenario || combos.length > 8");
+    expect(orchestrator).not.toContain("combos.length > 8 || requireStructuredExtraction");
+  });
+
+  it("Brand sends raw saved script like Solo (no filter-core rewrite at run time)", () => {
+    const orchestrator = readFileSync(orchestratorPath, "utf8");
+    expect(orchestrator).toContain("Match Solo (ScenarioDetail Run headless): send the raw saved script");
+    expect(orchestrator).toMatch(
+      /const executableCode = String\(\(script as any\)\?\.playwright_code \|\| ""\);/,
+    );
+    expect(orchestrator).not.toMatch(
+      /const executableCode = withCurrentFilterCore\(String\(\(script as any\)\?\.playwright_code/,
+    );
+  });
+
+  it("does not pass blank PCC metrics as skipped values", () => {
+    const orchestrator = readFileSync(orchestratorPath, "utf8");
+
+    expect(orchestrator).not.toContain('reason: "not_present_in_mstr"');
+    expect(orchestrator).not.toContain("skipped: true");
+    expect(orchestrator).toContain('error: "no_value"');
+  });
+
+  it("compares configured PCC name KPIs while excluding verification metadata", () => {
+    const orchestrator = readFileSync(orchestratorPath, "utf8");
+
+    expect(orchestrator).toContain("function pickComparableStructured");
+    expect(orchestrator).toContain("!/pcc.*verification/i");
+    expect(orchestrator).toContain("const comparisonKpiLabels = kpiLabels");
+    expect(orchestrator).not.toContain("kpiLabels.filter((label) => !/^(physician|hcp|account)");
+  });
+
+  it("preserves multi-row warehouse output as the expected structured KPI grid", () => {
+    const orchestrator = readFileSync(orchestratorPath, "utf8");
+
+    expect(orchestrator).toContain("structuredWarehouseLabel");
+    expect(orchestrator).toContain("rows.map((row: Record<string, any>)");
+    expect(orchestrator).toContain("cols.map((column) => row?.[column] ?? null)");
+  });
+
+  it("uses requested concurrency for screens while serializing each screen's scenarios", () => {
+    const orchestrator = readFileSync(orchestratorPath, "utf8");
+
+    expect(orchestrator).toContain("const reportConcurrency = concurrency;");
+    expect(orchestrator).toContain("const childConcurrency = 1;");
+  });
+
+  it("allows different brand runs while rejecting overlapping work in the same brand", () => {
+    const orchestrator = readFileSync(orchestratorPath, "utf8");
+
+    expect(orchestrator).not.toContain("const activeWorkstream = candidates.find");
+    expect(orchestrator).toContain("run.scope_id === workstreamId");
+    expect(orchestrator).toContain("reportWorkstream.get(activeReportId) === workstreamId");
+  });
+
+  it("persists a warehouse grid under its configured KPI instead of extractor metadata", () => {
+    const scenarioDetail = readFileSync(scenarioDetailPath, "utf8");
+
+    expect(scenarioDetail).toContain("const comparisonKeys = configuredKeys.length ? configuredKeys : actualKeys;");
+    expect(scenarioDetail).toContain("!key.startsWith(\"__\") && !isKpiNoiseKey(key)");
+  });
+
+  it("fails completed comparisons with missing KPI values instead of leaving them pending", () => {
+    const scenarioDetail = readFileSync(scenarioDetailPath, "utf8");
+
+    expect(scenarioDetail).toContain("const missingRequiredValue = comparisonExecuted && (v == null || exp == null);");
+    expect(scenarioDetail).toContain("const pass = missingRequiredValue ? false : evalPass");
+  });
+
+});

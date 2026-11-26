@@ -1,0 +1,105 @@
+import { corsHeaders } from "../_shared/cors.ts";
+import { getSupabase } from "../_shared/llm.ts";
+import cronParser from "npm:cron-parser@4.9.0";
+import { resolveFunctionAuth, resolveFunctionUrl } from "../_shared/internal-functions.ts";
+
+async function fireRun(scope_type: string, scope_id: string, schedule_id: string) {
+  const r = await fetch(resolveFunctionUrl("agent-orchestrate"), {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: resolveFunctionAuth("agent-orchestrate"),
+    },
+    body: JSON.stringify({ scope_type, scope_id, trigger_source: "schedule", schedule_id }),
+  });
+  return r.ok;
+}
+
+Deno.serve(async (req) => {
+  if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
+  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  const schedulerKey = Deno.env.get("SCHEDULE_TICK_SECRET");
+  const token = (req.headers.get("Authorization") || "").replace(/^Bearer\s+/i, "").trim();
+  if (!token || !(serviceKey && token === serviceKey || schedulerKey && token === schedulerKey)) {
+    return new Response(JSON.stringify({ error: "Scheduler authorization required" }), { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  }
+  try {
+    const sb = getSupabase();
+    const now = new Date();
+    const { data: schedules, error: schedulesError } = await sb.from("schedules").select("*").eq("enabled", true);
+    if (schedulesError) throw schedulesError;
+    const fired: any[] = [];
+    const skipped: any[] = [];
+
+    for (const s of schedules || []) {
+      try {
+        const baseline = s.last_run_at ? new Date(s.last_run_at) : new Date(s.created_at);
+        const tz = s.timezone || "UTC";
+        const it = tz === "UTC"
+          ? cronParser.parseExpression(s.cron, { currentDate: now, utc: true })
+          : cronParser.parseExpression(s.cron, { currentDate: now, tz });
+        const prev = it.prev().toDate();
+        // #region agent log
+        if (s.scope_id === "ef76403d-8368-4f69-b8e8-8c7abeec75a7" || String(s.scope_id || "").startsWith("ef76403d")) {
+          fetch("http://127.0.0.1:7601/ingest/7fea574a-90a5-4c13-82f0-235afdf7c6c7", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "b772b1" },
+            body: JSON.stringify({
+              sessionId: "b772b1",
+              runId: "schedule-tick",
+              hypothesisId: "DUE",
+              location: "schedule-tick/index.ts:evaluate",
+              message: "evaluate report schedule",
+              data: {
+                id: s.id,
+                cron: s.cron,
+                tz,
+                enabled: s.enabled,
+                prev: prev.toISOString(),
+                baseline: baseline.toISOString(),
+                due: prev > baseline,
+                last_run_at: s.last_run_at,
+                created_at: s.created_at,
+              },
+              timestamp: Date.now(),
+            }),
+          }).catch(() => {});
+        }
+        // #endregion
+        if (prev > baseline) {
+          if (!["workstream", "report"].includes(s.scope_type) || !s.scope_id) {
+            skipped.push({ id: s.id, reason: "invalid_scope" });
+            continue;
+          }
+          // Atomically CLAIM the schedule BEFORE firing to prevent duplicate runs
+          // when schedule-tick is invoked twice (cold-start, retry, parallel cron).
+          // The .eq("last_run_at", ...) filter ensures only one claimant succeeds.
+          const claimQuery = sb.from("schedules")
+            .update({ last_run_at: now.toISOString() })
+            .eq("id", s.id);
+          const { data: claimed, error: claimErr } = s.last_run_at
+            ? await claimQuery.eq("last_run_at", s.last_run_at).select("id")
+            : await claimQuery.is("last_run_at", null).select("id");
+          if (claimErr || !claimed || claimed.length === 0) {
+            skipped.push({ id: s.id, reason: "already_claimed" });
+            continue;
+          }
+          const ok = await fireRun(s.scope_type, s.scope_id, s.id);
+          fired.push({ id: s.id, scope: `${s.scope_type}:${s.scope_id}`, cron: s.cron, ok });
+        } else {
+          skipped.push({ id: s.id, reason: "not_due", prev: prev.toISOString(), baseline: baseline.toISOString() });
+        }
+      } catch (e) {
+        skipped.push({ id: s.id, reason: "error", error: String(e) });
+      }
+    }
+
+    return new Response(JSON.stringify({ ok: true, now: now.toISOString(), fired, skipped }), {
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  } catch (e) {
+    return new Response(JSON.stringify({ ok: false, error: String(e) }), {
+      status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+});
