@@ -152,12 +152,7 @@ export function extractPayloadError(payload: unknown): string | null {
     (extracted && extracted.ok === false ? extracted.message : null) ||
     null;
   const text = raw != null ? String(raw).trim() : "";
-  if (!text) return null;
-  // Filter read-back is informational only — do not classify the scrape as failed.
-  if (/^filter verification failed$/i.test(text) || /^(FILTER_DRIFT|FILTER_NOT_VERIFIED|FILTER_NOT_APPLIED)$/i.test(text)) {
-    return null;
-  }
-  return text;
+  return text || null;
 }
 
 export function classifyRuntimePayload(

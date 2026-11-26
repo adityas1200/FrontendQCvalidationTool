@@ -67,13 +67,8 @@ export async function requireAuth(req: Request): Promise<Response | null> {
   // Allow internal service-role calls.
   if (token === Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")) return null;
 
-  const claims = decodeJwtPayload(token);
-  const graceJwt = () =>
-    devGraceEnabled() &&
-    looksLikeUserJwt(claims, { allowExpiredMs: 24 * 60 * 60 * 1000 });
-
-  // Prefer live Auth verification. On Bayer VDI, Deno often cannot resolve
-  // *.supabase.co (corp DNS), so AUTH_DEV_GRACE accepts a well-formed user JWT.
+  // Only the auth service can verify identity. Decoded claims and network
+  // failures never authorize a caller, including in development grace mode.
   try {
     const sb = createClient(
       Deno.env.get("SUPABASE_URL")!,
@@ -82,28 +77,7 @@ export async function requireAuth(req: Request): Promise<Response | null> {
     );
     const { data, error } = await sb.auth.getUser();
     if (!error && data?.user) return null;
-    if (graceJwt() && (!error || isNetworkishAuthError(error))) {
-      console.warn(
-        JSON.stringify({
-          component: "auth",
-          evt: "auth_dev_grace",
-          reason: error ? String((error as { message?: string }).message || error) : "no_user",
-        }),
-      );
-      return null;
-    }
-  } catch (e) {
-    if (graceJwt() && isNetworkishAuthError(e)) {
-      console.warn(
-        JSON.stringify({
-          component: "auth",
-          evt: "auth_dev_grace",
-          reason: String((e as { message?: string })?.message || e),
-        }),
-      );
-      return null;
-    }
-  }
+  } catch { /* fail closed */ }
   return unauthorized();
 }
 
