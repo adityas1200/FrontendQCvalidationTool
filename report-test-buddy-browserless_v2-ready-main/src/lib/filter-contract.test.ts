@@ -7,6 +7,11 @@ describe("fail closed filter evidence", () => {
   it("a previous East state cannot satisfy the next West request", () => { expect(verifyFilterEvidence({ Region: "West" }, { Region: "East" }).ok).toBe(false); });
   it("requested values without observed evidence remain unverified", () => { expect(verifyFilterEvidence({ Region: "West" }, null)).toMatchObject({ ok: false, evidence: [{ key: "Region", requested: "West", observed: null }] }); });
   it("failed selection cannot pass despite matching text", () => { expect(verifyFilterEvidence({ Region: "West" }, { Region: { ok: false, verified: "West" } }).ok).toBe(false); });
+  it("matches filter keys case-insensitively (View By vs View by)", () => {
+    const requested = { "View By": "Area", Area: "Total", Region: "Total" };
+    const applied = { "View by": "Area", Area: "Total", Region: "Total" };
+    expect(verifyFilterEvidence(requested, applied).ok).toBe(true);
+  });
   it("active filter core stops before extraction on failed selection", async () => {
     const start = FILTER_CORE_JS.indexOf("const applyFiltersVerified");
     const code = FILTER_CORE_JS.slice(start).replace("// @@RTB_FILTER_CORE_END@@", "");

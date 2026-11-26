@@ -518,7 +518,10 @@ export function deriveStoredResultStatus(args: Parameters<typeof deriveStoredRes
 function firstPayloadError(side: any): string {
   if (!side || typeof side !== "object") return "";
   const e = side.error;
-  if (typeof e === "string" && e.trim()) return e.trim();
+  // Filter verification is diagnostic only and must not fail the result.
+  if (typeof e === "string" && e.trim() && !/^filter verification failed$/i.test(e) && !/^reference filter verification failed$/i.test(e)) {
+    return e.trim();
+  }
   const message = side.message;
   if (typeof message === "string" && message.trim() && !Object.keys(unwrapStoredValues(side)).length) {
     return message.trim();

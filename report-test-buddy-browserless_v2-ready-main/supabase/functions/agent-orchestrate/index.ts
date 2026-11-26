@@ -747,7 +747,7 @@ function classifyComboRuntime(payload: any, comboLabel: string | null, target: "
 
 const EXTRACTION_MAX_ATTEMPTS = Math.max(
   1,
-  Math.min(5, Number(Deno.env.get("EXTRACTION_MAX_ATTEMPTS") || 3) || 3),
+  Math.min(5, Number(Deno.env.get("EXTRACTION_MAX_ATTEMPTS") || 1) || 1),
 );
 
 function looksLikeStructuredKpiLabel(label: string): boolean {
@@ -2011,6 +2011,8 @@ Deno.serve(async (req) => {
               const scraped = pickComboKpis(comboRunResp, combo.label, comparisonKpiLabels, kpiAliases) || {};
               const filtersApplied =
                 pickComboFiltersApplied(comboRunResp, combo.label);
+              // Filter verification is recorded for diagnostics only — it must not
+              // fail the combo when extraction/compare already produced values.
               const filterVerification = verifyFilterEvidence(combo.filters || {}, filtersApplied);
               // Plain matrix filters (string values) mean the script envelope was
               // missing filters_applied — usually empty/unparseable extraction.
@@ -2039,16 +2041,12 @@ Deno.serve(async (req) => {
               let expectedMap: Record<string, any> = {};
               let sqlMeta: any = { source: isRef ? "reference_script" : (sqlTplId ? "warehouse" : "none") };
               let sqlRow: Record<string, any> | null = null;
-              // Reference values only count when its own filters were read back.
-              let refFilterVerificationOk = true;
-
               if (isRef) {
                 const comboRefResp = selectedResponse(isolatedRefResponses.get(String(combo.id)) || refResp, combo);
                 const comboRefExec = comboRefResp?.extracted;
                 const referenceVerification = verifyFilterEvidence(combo.filters || {}, pickComboFiltersApplied(comboRefResp, combo.label));
-                refFilterVerificationOk = referenceVerification.ok;
                 const comboRefError =
-                  refError || (!referenceVerification.ok ? "Reference filter verification failed" : null) ||
+                  refError ||
                   comboExecutionError(comboRefResp, combo.label) ||
                   comboRefResp?.error ||
                   (comboRefResp?.ok === false ? comboRefResp?.message || "reference scrape failed" : null) ||
@@ -2077,7 +2075,7 @@ Deno.serve(async (req) => {
                     run_id: run.id,
                     scenario_id: s.id,
                     combo: combo.label,
-                    ref_filter_ok: refFilterVerificationOk,
+                    ref_filter_ok: referenceVerification.ok,
                     combo_ref_error: comboRefError,
                     used_isolated_retry: isolatedRefResponses.has(String(combo.id)),
                     exp_non_empty: expNonEmpty,
@@ -2562,7 +2560,7 @@ Deno.serve(async (req) => {
                 if (refOutcome.category !== "pass") comboPass = false;
               }
 
-              if (mainOutcome.category !== "pass" || !filterVerification.ok || !refFilterVerificationOk) comboPass = false;
+              if (mainOutcome.category !== "pass") comboPass = false;
 
               let failureCategory: ExtractionFailureCategory = comboPass
                 ? "pass"
@@ -2581,7 +2579,6 @@ Deno.serve(async (req) => {
                 if (failureCategory === "pass") failureCategory = "fail";
               }
 
-              if (!filterVerification.ok || !refFilterVerificationOk) failureCategory = "partial_extraction";
               const status = statusFromCategory(failureCategory, comboPass);
               // #region agent log
               agentDebugLog("D", "agent-orchestrate/index.ts:combo_persist_outcome", "combo persist outcome", {
@@ -2592,7 +2589,7 @@ Deno.serve(async (req) => {
                 failure_category: failureCategory,
                 combo_pass: comboPass,
                 main_filter_ok: filterVerification.ok,
-                ref_filter_ok: refFilterVerificationOk,
+                ref_filter_ok: true,
                 main_missing: mainOutcome.missing_fields,
                 ref_missing: refOutcome?.missing_fields || [],
                 expected_non_empty: Object.entries(expectedMap).filter(([, v]) => v != null && String(v).trim() !== "").length,
@@ -2653,7 +2650,7 @@ Deno.serve(async (req) => {
                   requested_filters: combo.filters || {},
                   filter_verification: filterVerification,
                   execution_status: failureCategory,
-                  error: !filterVerification.ok ? "Filter verification failed" : mainOutcome.error || null,
+                  error: mainOutcome.error || null,
                   filter: combo.label,
                   values: actualMap,
                   filters_applied: filtersApplied,

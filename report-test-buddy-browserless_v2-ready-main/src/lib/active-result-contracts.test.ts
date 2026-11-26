@@ -61,6 +61,25 @@ describe("execution status precedence and partial values", () => {
     expect(executionErrors(node)).toEqual(["navigation failed"]);
     expect(deriveExecutionOutcome({ actual: node, status: "pass" }, "pass")).toBe("execution_failed");
   });
+  it("does not treat soft loading wait timeouts as execution failures", () => {
+    const actual = {
+      values: { "Sales (NBRx)": "Oct 23 - 2026", "Refresh Date": "Nov 22 - 2026" },
+      extracted: {
+        ok: true,
+        result: {
+          ok: true,
+          navigation: {
+            performance_ready: {
+              ok: true,
+              loading: { ok: false, timeout: true, ms: 45007, ended_by: "timeout" },
+            },
+          },
+        },
+      },
+    };
+    expect(executionErrors(actual)).toEqual([]);
+    expect(deriveExecutionOutcome({ actual, status: "fail" }, "pass")).toBe("passed");
+  });
 });
 describe("Sync and accounting", () => {
   it("does not silently reuse old Actual on null incoming values", () => {

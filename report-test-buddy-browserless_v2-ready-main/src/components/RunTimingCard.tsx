@@ -3,7 +3,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { ChevronDown, ChevronUp, Eye } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { collectAttempts, formatMs, formatMsLong, summarizeRunTiming, type RunTiming } from "@/lib/runTiming";
+import { collectAttempts, effectiveRunBounds, formatMs, formatMsLong, summarizeRunTiming, type RunTiming } from "@/lib/runTiming";
 
 type Kpi = { label: string; meaning: string; value: (t: RunTiming) => string };
 const ms = (f: (t: RunTiming) => number) => (t: RunTiming) => formatMs(f(t));
@@ -55,10 +55,13 @@ export function RunTimingCard({ run, results }: { run: any; results: any[] }) {
   const timing = useMemo(() => {
     const attempts = collectAttempts(results || []);
     if (!attempts.length) return null;
-    const start = run?.started_at ? Date.parse(run.started_at) : Date.parse(attempts[0].started_at);
-    const end = run?.finished_at ? Date.parse(run.finished_at) : Date.now();
+    const bounds = effectiveRunBounds(run, results || []);
+    const start = Number.isFinite(bounds.startMs)
+      ? bounds.startMs
+      : Date.parse(attempts[0].started_at);
+    const end = Number.isFinite(bounds.endMs) ? bounds.endMs : Date.now();
     return summarizeRunTiming(attempts, Math.max(0, end - start), start);
-  }, [run?.started_at, run?.finished_at, results]);
+  }, [run?.started_at, run?.finished_at, run?.status, results]);
 
   if (!timing) {
     return (

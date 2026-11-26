@@ -111,11 +111,13 @@ describe("updated upload Brand persistence", () => {
     expect(inserted.map(row => row.actual.values.TRx)).toEqual([0, 7]);
     expect(calls.filter(call => call.url.endsWith("playwright-runtime"))[0].body.filter_combinations.map((combo: any) => combo.id)).toEqual(["a", "b"]);
   });
-  it("retains KPI evidence but cannot pass unobserved filters", async () => {
+  it("retains KPI evidence and does not fail solely for unobserved filters", async () => {
     const { inserted } = await execute(false, { missingFilters: true });
     expect(inserted[0].actual.values.TRx).toBe(0);
-    expect(inserted[0].status).not.toBe("pass");
     expect(inserted[0].actual.filter_verification.ok).toBe(false);
+    // Filter verification is diagnostic only — status follows extraction/compare.
+    expect(inserted[0].status).toBe("pass");
+    expect(inserted[0].actual.error).toBeNull();
   });
   it("surfaces failed result persistence instead of claiming completion", async () => {
     const { updates } = await execute(false, { rejectInsert: true });

@@ -116,6 +116,54 @@ export const PHASES = [
       report_retry_wait_ms: Math.min(report_ms, duration(retryReport)), phase_ms, phase_detail, attempts };
   }
   
+  /**
+   * Wall-clock bounds for Duration / Total Execution Time.
+   * Prefer last scenario/browser activity over a late runs.finished_at
+   * (workstream parent finalize can lag long after the last test_result).
+   */
+  export function effectiveRunBounds(
+    run: { started_at?: string | null; finished_at?: string | null; status?: string | null } | null | undefined,
+    results: Array<{ created_at?: string | null; actual?: any; expected?: any }> | null | undefined,
+  ): { startedAt: string | null; finishedAt: string | null; startMs: number; endMs: number } {
+    const startedAt = run?.started_at || null;
+    const startMs = startedAt ? Date.parse(startedAt) : NaN;
+    const finishedAtRaw = run?.finished_at || null;
+    const finishedMs = finishedAtRaw ? Date.parse(finishedAtRaw) : NaN;
+    const attempts = collectAttempts(results || []);
+    let activityEnd = NaN;
+    for (const r of results || []) {
+      const t = r?.created_at ? Date.parse(r.created_at) : NaN;
+      if (Number.isFinite(t)) activityEnd = Number.isFinite(activityEnd) ? Math.max(activityEnd, t) : t;
+    }
+    for (const a of attempts) {
+      const t0 = Date.parse(a.started_at);
+      if (!Number.isFinite(t0)) continue;
+      const t1 = t0 + Math.max(0, Number(a.browser_ms) || 0);
+      activityEnd = Number.isFinite(activityEnd) ? Math.max(activityEnd, t1) : t1;
+    }
+    const running = run?.status === "running";
+    let endMs: number;
+    if (running) {
+      endMs = Date.now();
+    } else if (Number.isFinite(activityEnd) && Number.isFinite(finishedMs)) {
+      // Ignore post-work finalize idle on the parent run row.
+      endMs = Math.min(finishedMs, activityEnd);
+    } else if (Number.isFinite(activityEnd)) {
+      endMs = activityEnd;
+    } else if (Number.isFinite(finishedMs)) {
+      endMs = finishedMs;
+    } else {
+      endMs = Date.now();
+    }
+    if (Number.isFinite(startMs) && endMs < startMs) endMs = startMs;
+    return {
+      startedAt,
+      finishedAt: Number.isFinite(endMs) ? new Date(endMs).toISOString() : finishedAtRaw,
+      startMs: Number.isFinite(startMs) ? startMs : NaN,
+      endMs: Number.isFinite(endMs) ? endMs : NaN,
+    };
+  }
+
   export function formatMs(ms: number): string {
     const s = Math.round(ms / 1000);
     if (s < 60) return `${s}s`;

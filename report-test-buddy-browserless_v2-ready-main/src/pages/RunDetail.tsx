@@ -14,6 +14,7 @@ import { Button } from "@/components/ui/button";
 import { XCircle, Trash2 } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { fetchRunAssertionSpecs, fetchRunTestResults } from "@/lib/runTestResults";
+import { effectiveRunBounds } from "@/lib/runTiming";
 
 function formatRunDuration(startedAt?: string | null, finishedAt?: string | null) {
   if (!startedAt) return "—";
@@ -181,6 +182,10 @@ export default function RunDetail() {
   // inside each case card but do not inflate the run counters.
   const displayedCounts = counts;
   const displayedRunStatus = run ? presentedRunStatus(run, counts) : undefined;
+  const durationBounds = useMemo(
+    () => effectiveRunBounds(run as any, results || []),
+    [run, results],
+  );
   const reportOutcomes: Record<string, any> = storedSummary.reports || {};
   const failedReportIds = Object.keys(reportOutcomes).filter((rid) => reportOutcomes[rid]?.status === "error");
   const { data: failedReportNames } = useQuery({
@@ -216,8 +221,8 @@ export default function RunDetail() {
               </span>
               <span className="rounded border border-amber-400/50 bg-amber-100 px-2 py-0.5 text-amber-800 dark:bg-amber-400/15 dark:text-amber-200 font-medium">
                 {isRunning ? "Elapsed" : "Duration"}: {formatRunDuration(
-                  (run as any)?.started_at,
-                  (run as any)?.finished_at,
+                  durationBounds.startedAt,
+                  isRunning ? null : durationBounds.finishedAt,
                 )}
               </span>
             </div>
