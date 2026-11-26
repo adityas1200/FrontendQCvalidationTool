@@ -180,7 +180,6 @@ export function RunScenarioCard({
             if (!aggregated) return null;
             const category = aggregated.category;
             const missing = aggregated.missing_fields;
-            const attempts = aggregated.attempt_count;
             if (!category && !missing.length) return null;
             const extractionLabel = formatExtractionStatusLabel(category);
             // Validation follows overall scenario outcome (any combo fail → FAIL).
@@ -193,7 +192,6 @@ export function RunScenarioCard({
                   <div>
                     Extraction Status:{" "}
                     <StatusChip status={category} label={extractionLabel} />
-                    {attempts != null && Number.isFinite(attempts) ? ` · Attempts: ${attempts}` : ""}
                   </div>
                 )}
                 {category && (

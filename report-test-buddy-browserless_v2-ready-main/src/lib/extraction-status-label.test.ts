@@ -19,15 +19,11 @@ describe("extraction-status-label", () => {
     expect(formatExtractionStatusLabel("empty_extraction")).toBe("FAILED");
   });
 
-  it("formats extraction line with Attempts", () => {
-    expect(formatExtractionStatusLine("pass", 1)).toBe(
-      "Extraction Status: PASS · Attempts: 1",
-    );
-    expect(formatExtractionStatusLine("pass", 2)).toBe(
-      "Extraction Status: PASS · Attempts: 2",
-    );
+  it("formats extraction line without Attempts", () => {
+    expect(formatExtractionStatusLine("pass", 1)).toBe("Extraction Status: PASS");
+    expect(formatExtractionStatusLine("pass", 2)).toBe("Extraction Status: PASS");
     expect(formatExtractionStatusLine("auth_failure", 1)).toBe(
-      "Extraction Status: AUTH FAILURE · Attempts: 1",
+      "Extraction Status: AUTH FAILURE",
     );
   });
 

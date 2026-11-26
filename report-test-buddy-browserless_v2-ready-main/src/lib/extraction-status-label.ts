@@ -120,14 +120,10 @@ export function resolveValidationDisplayStatus(
 
 export function formatExtractionStatusLine(
   category: string | null | undefined,
-  attempts?: number | null,
+  _attempts?: number | null,
 ): string {
   const label = formatExtractionStatusLabel(category);
   if (!label) return "";
-  const attemptsNum = attempts != null ? Number(attempts) : NaN;
-  if (Number.isFinite(attemptsNum)) {
-    return `Extraction Status: ${label} · Attempts: ${attemptsNum}`;
-  }
   return `Extraction Status: ${label}`;
 }
 
